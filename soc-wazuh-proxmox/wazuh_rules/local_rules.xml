@@ -1,0 +1,155 @@
+<!-- =====================================================================
+     Règles de détection personnalisées — Projet SOC (Ingétis)
+     Auteur : Alouna Valentin Junior Emmanuel
+     SIEM : Wazuh 4.14.7
+     ===================================================================== -->
+
+<!-- ===================== RÉSEAU ===================== -->
+<group name="local,firewall,">
+  <rule id="100010" level="5">
+    <match>UFW BLOCK</match>
+    <description>Firewall (UFW) blocked a connection attempt.</description>
+    <group>firewall,</group>
+  </rule>
+
+  <rule id="100011" level="12" frequency="8" timeframe="10">
+    <if_matched_sid>100010</if_matched_sid>
+    <same_source_ip />
+    <description>Possible port scan detected: multiple firewall blocks from the same source IP in a short time.</description>
+    <group>recon,firewall,</group>
+  </rule>
+</group>
+
+<group name="ssh,bruteforce,">
+  <rule id="5760" level="5">
+    <decoded_as>sshd</decoded_as>
+    <match>Failed password</match>
+    <description>SSH authentication failure</description>
+    <group>authentication_failed,</group>
+  </rule>
+
+  <rule id="100021" level="10" frequency="5" timeframe="120">
+    <if_matched_sid>5760</if_matched_sid>
+    <same_source_ip />
+    <description>Possible SSH brute force attack (5 failures in 120s)</description>
+    <group>brute_force,</group>
+  </rule>
+</group>
+
+<group name="local,firewall,sensitive_ports,">
+  <rule id="100030" level="8">
+    <if_sid>100010</if_sid>
+    <regex type="pcre2">DPT=(21|23|445|1433|3306|3389)\b</regex>
+    <description>Connection attempt to a sensitive/high-risk port detected (FTP/Telnet/SMB/SQL/RDP)</description>
+    <group>recon,firewall,sensitive_port,</group>
+  </rule>
+</group>
+
+<group name="local,firewall,udp_scan,">
+  <rule id="100040" level="5">
+    <if_sid>100010</if_sid>
+    <match>PROTO=UDP</match>
+    <description>Firewall (UFW) blocked a UDP connection attempt.</description>
+    <group>firewall,udp,</group>
+  </rule>
+  <rule id="100041" level="12" frequency="5" timeframe="10">
+    <if_matched_sid>100040</if_matched_sid>
+    <same_source_ip />
+    <description>Possible UDP port scan detected: multiple UDP firewall blocks from the same source IP in a short time.</description>
+    <group>recon,firewall,udp,</group>
+  </rule>
+</group>
+
+<group name="local,firewall,volumetric,">
+  <rule id="100050" level="10" frequency="7" timeframe="20">
+    <if_matched_sid>100010</if_matched_sid>
+    <same_source_ip />
+    <description>High volume of firewall blocks detected (possible aggressive network scan or DoS attempt).</description>
+    <group>recon,firewall,volumetric,</group>
+  </rule>
+</group>
+
+<!-- ===================== SYSTÈME ===================== -->
+<group name="local,syscheck,critical_files,">
+  <rule id="100060" level="12">
+    <if_sid>550</if_sid>
+    <field name="file">etc/passwd|etc/shadow|etc/sudoers</field>
+    <description>Critical system file modified: possible privilege escalation or unauthorized change (passwd/shadow/sudoers).</description>
+    <group>syscheck,privilege_escalation,</group>
+  </rule>
+</group>
+
+<group name="local,syscheck,firewall_config,">
+  <rule id="100070" level="10">
+    <if_sid>550</if_sid>
+    <field name="file">etc/ufw/ufw.conf</field>
+    <description>Firewall configuration file modified: possible attempt to disable host firewall protection.</description>
+    <group>syscheck,defense_evasion,</group>
+  </rule>
+</group>
+
+<group name="local,syscheck,user_creation,">
+  <rule id="100080" level="10">
+    <if_sid>5902</if_sid>
+    <description>New user account created (useradd). Potential unauthorized access or persistence.</description>
+    <group>syscheck,persistence,</group>
+  </rule>
+</group>
+
+<group name="local,auth,sudo_usage,">
+  <rule id="100090" level="8">
+    <if_sid>5402</if_sid>
+    <description>Successful sudo command executed (potential privilege escalation).</description>
+    <group>syscheck,privilege_escalation,</group>
+  </rule>
+</group>
+
+<group name="local,syscheck,service_stop,">
+  <rule id="100100" level="12">
+    <if_sid>550</if_sid>
+    <field name="file">etc/ssh/sshd_config</field>
+    <description>Critical service configuration modified (SSH). Potential service disruption or backdoor.</description>
+    <group>syscheck,defense_evasion,</group>
+  </rule>
+</group>
+
+<!-- ===================== WEB ===================== -->
+<group name="local,web,attack,">
+  <rule id="100200" level="8" frequency="15" timeframe="10">
+    <if_matched_sid>31100</if_matched_sid>
+    <description>Web directory scan detected (multiple 404s) - based on native Wazuh detection.</description>
+    <group>recon,web,</group>
+  </rule>
+
+  <rule id="100210" level="10">
+    <if_sid>31164</if_sid>
+    <description>Possible SQL injection attempt detected in URL (based on native Wazuh detection).</description>
+    <group>attack,web,sql_injection,</group>
+  </rule>
+
+  <rule id="100221" level="5">
+    <if_sid>31108</if_sid>
+    <match>POST /login|POST /wp-login.php</match>
+    <description>Login attempt detected (base rule for correlation).</description>
+    <group>web,login_attempt,</group>
+  </rule>
+  <rule id="100220" level="10" frequency="10" timeframe="30">
+    <if_matched_sid>100221</if_matched_sid>
+    <description>Web brute force login attempt detected.</description>
+    <group>attack,web,brute_force,</group>
+  </rule>
+
+  <rule id="100230" level="12">
+    <if_sid>31106</if_sid>
+    <match>\.\./|\.\.%2f|etc/passwd|etc/shadow</match>
+    <description>Path Traversal attempt detected (directory traversal).</description>
+    <group>attack,web,path_traversal,</group>
+  </rule>
+
+  <rule id="100240" level="10">
+    <if_sid>31100</if_sid>
+    <match type="pcre2">\.git|\.env|phpmyadmin|config\.php|\.bak</match>
+    <description>Access to sensitive web file or directory detected.</description>
+    <group>attack,web,exposure,</group>
+  </rule>
+</group>
